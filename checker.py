@@ -171,4 +171,4 @@ if __name__ == "__main__":
     while True:
         print(f"😴 Sleeping for {CHECK_INTERVAL_MINUTES} minutes...")
         time.sleep(CHECK_INTERVAL_MINUTES * 60)
-        run_monitor()git
+        run_monitor()
