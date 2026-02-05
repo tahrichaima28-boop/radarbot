@@ -3,10 +3,10 @@ import requests
 import ssl
 import socket
 from datetime import datetime
+import os
 
-
-TOKEN = "8556508550:AAEaWz2TbJPRi5pGpmCdrPSJlsNGpKsSPWw"
-CHAT_ID = "7176083414"
+TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 URL_FILE = "file.json"
 
 def load_urls(file_path):
@@ -37,30 +37,18 @@ def check_url_status(url):
 def check_ssl_expiry(url):
     """Check SSL certificate expiry date"""
     try:
-        # Only check HTTPS URLs
         if not url.startswith("https://"):
             return None
-        
-        # Extract domain from URL
         domain = url.replace("https://", "").split("/")[0]
-        
-        # Create SSL context and get certificate
         context = ssl.create_default_context()
         sock = socket.create_connection((domain, 443), timeout=10)
         ssock = context.wrap_socket(sock, server_hostname=domain)
         cert = ssock.getpeercert()
-        
-        # Parse expiry date
         expire_date_str = cert['notAfter']
         expire_date = datetime.strptime(expire_date_str, "%b %d %H:%M:%S %Y GMT")
-        
-        # Calculate days remaining
         days_left = (expire_date - datetime.utcnow()).days
-        
-        # Clean up connections
         ssock.close()
         sock.close()
-        
         return days_left
     except:
         return None
@@ -92,6 +80,7 @@ def get_status_text(status_code, status_type):
 def send_telegram_message(message):
     """Send message to Telegram"""
     try:
+        # 🚨 Fixed: removed space in URL!
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         data = {
             "chat_id": CHAT_ID,
@@ -107,8 +96,6 @@ def create_alert_message(url, status_code, status_type, ssl_days=None):
     """Create alert message with SSL info if available"""
     current_time = datetime.now().strftime("%Y-%m-%d : %H:%M")
     status_text = get_status_text(status_code, status_type)
-    
-    # Base message
     message = f"""🚨 **ALERT: Server Down!**
 
 🌐 **Site:** {url}
@@ -116,39 +103,26 @@ def create_alert_message(url, status_code, status_type, ssl_days=None):
 🛠 **Status Code:** {status_text}
 
 ⏰ **Time:** {current_time}"""
-    
-    # Only add SSL warning if ssl_days is less than 7
     if ssl_days is not None and ssl_days <= 7:
         message += f"""
 
 ⚠️ **Warning: SSL Certificate**
 
 📅 **Expires in:** {ssl_days} days!"""
-    
     return message
 
 def main():
     print(" Starting URL monitoring system...")
     print("=" * 50)
-    
-    # Load URLs from JSON file
     urls = load_urls(URL_FILE)
-    
     if not urls:
         print(" No URLs to check. Please add URLs to file.json")
         return
-    
     print(f" Found {len(urls)} URL(s) to check")
     print("=" * 50)
-    
-    # Check each URL
     for url in urls:
         print(f" Checking: {url}")
-        
-        # Check URL status
         status_code, status_type = check_url_status(url)
-        
-        # Check SSL expiry for HTTPS URLs
         ssl_days = None
         if url.startswith("https://"):
             ssl_days = check_ssl_expiry(url)
@@ -156,20 +130,11 @@ def main():
                 print(f"    SSL expires in: {ssl_days} days")
             else:
                 print("    Could not check SSL (connection failed)")
-
-        
-        # Check if server is down (non-200 status)
         if status_code != 200:
             print(f" SERVER PROBLEM: {status_type}")
-            
-            # Create alert message
             message = create_alert_message(url, status_code, status_type, ssl_days)
-            
-            # Print to console
             print(" Alert Message:")
             print(message.replace("**", ""))
-            
-            # Send to Telegram
             print(" Sending to Telegram...", end="")
             if send_telegram_message(message):
                 print("  Sent")
@@ -177,10 +142,47 @@ def main():
                 print("  Failed")
         else:
             print(f" Site is working normally")
-        
         print("-" * 50)
-    
     print("\n Monitoring complete!")
 
+# ================================
+# 🌐 WEB SERVER FOR RENDER + CRON
+# ================================
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
+
+class RequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/run':
+            try:
+                main()
+                self.send_response(200)
+                self.send_header("Content-type", "text/plain")
+                self.end_headers()
+                self.wfile.write("✅ Monitor executed successfully")
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(f"❌ Error: {str(e)}".encode())
+        elif self.path == '/':
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+def run_web_server():
+    port = int(os.getenv("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), RequestHandler)
+    print(f"🚀 Web server running on port {port}")
+    server.serve_forever()
+
 if __name__ == "__main__":
-    main()
+    # If running on Render (web mode)
+    if os.getenv("RENDER_EXTERNAL_URL"):
+        run_web_server()
+    else:
+        # Run once (local testing)
+        main()
